@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Interest-Based Video Chat Pro</title>
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css" rel="stylesheet">
+    <script src="https://unpkg.com/peerjs@1.4.7/dist/peerjs.min.js"></script>
+</head>
+<body class="bg-gradient-to-r from-purple-500 to-pink-500 min-h-screen">
+    <div class="container mx-auto px-4 py-8">
+        <div class="max-w-md mx-auto bg-white rounded-xl shadow-lg overflow-hidden md:max-w-2xl">
+            <!-- Header -->
+            <div class="p-8">
+                <div class="uppercase tracking-wide text-sm text-purple-500 font-semibold">Smart Video Chat</div>
+                <h1 class="mt-2 text-2xl font-bold">Meet People With Similar Interests</h1>
+            </div>
+
+            <!-- Interest Form -->
+            <div id="interestForm" class="p-8 border-t">
+                <form id="userInterests" class="space-y-6">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">Share Your Interests</label>
+                        <input type="text" id="interests" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-purple-500 focus:ring-purple-500 p-2 border" placeholder="coding, music, gaming, travel..." required>
+                    </div>
+                    <button type="submit" class="w-full flex justify-center py-3 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-purple-600 hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500 transition-all">
+                        Find Someone Like-Minded
+                    </button>
+                </form>
+            </div>
+
+            <!-- Video Chat UI -->
+            <div id="videoChat" class="hidden p-8 border-t">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div class="relative">
+                        <video id="localVideo" autoplay muted playsinline class="w-full rounded-lg bg-gray-200 h-[240px] object-cover"></video>
+                        <span class="absolute bottom-2 left-2 bg-black bg-opacity-50 text-white px-2 py-1 rounded text-sm">You</span>
+                    </div>
+                    <div class="relative">
+                        <video id="remoteVideo" autoplay playsinline class="w-full rounded-lg bg-gray-200 h-[240px] object-cover"></video>
+                        <span class="absolute bottom-2 left-2 bg-black bg-opacity-50 text-white px-2 py-1 rounded text-sm">Partner</span>
+                    </div>
+                </div>
+                <div class="mt-6 flex justify-center space-x-6">
+                    <button id="muteAudio" class="p-3 rounded-full bg-gray-100 hover:bg-gray-200 transition-all">
+                        <i class="bi bi-mic-fill text-xl"></i>
+                    </button>
+                    <button id="muteVideo" class="p-3 rounded-full bg-gray-100 hover:bg-gray-200 transition-all">
+                        <i class="bi bi-camera-video-fill text-xl"></i>
+                    </button>
+                    <button id="endCall" class="p-3 rounded-full bg-red-500 hover:bg-red-600 text-white transition-all">
+                        <i class="bi bi-telephone-x-fill text-xl"></i>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Loading State -->
+            <div id="loading" class="hidden p-8">
+                <div class="flex flex-col items-center">
+                    <div class="animate-spin rounded-full h-12 w-12 border-4 border-purple-500 border-t-transparent"></div>
+                    <p class="mt-4 text-gray-600">Finding your perfect chat partner...</p>
+                    <p id="waitTime" class="text-sm text-gray-500 mt-2">Estimated wait time: <span id="timer">0</span>s</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let peer;
+        let currentCall;
+        let localStream;
+        let waitTimer;
+
+        const API_URL = 'https://your-render-backend.onrender.com';
+
+        async function initializePeer() {
+            peer = new Peer({
+                config: {
+                    'iceServers': [
+                        { url: 'stun:stun.l.google.com:19302' },
+                        { url: 'turn:numb.viagenie.ca', credential: 'muazkh', username: 'webrtc@live.com' }
+                    ]
+                }
+            });
+
+            peer.on('call', async (call) => {
+                currentCall = call;
+                const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+                localStream = stream;
+                document.getElementById('localVideo').srcObject = stream;
+                call.answer(stream);
+                
+                call.on('stream', (remoteStream) => {
+                    document.getElementById('remoteVideo').srcObject = remoteStream;
+                });
+            });
+        }
+
+        document.getElementById('userInterests').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const interests = document.getElementById('interests').value;
+            
+            document.getElementById('interestForm').classList.add('hidden');
+            document.getElementById('loading').classList.remove('hidden');
+            
+            let seconds = 0;
+            waitTimer = setInterval(() => {
+                seconds++;
+                document.getElementById('timer').textContent = seconds;
+            }, 1000);
+
+            try {
+                // Initialize WebRTC peer
+                await initializePeer();
+
+                // Send interests to backend
+                const response = await fetch(`${API_URL}/match`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        interests,
+                        peerId: peer.id
+                    })
+                });
+
+                if (response.ok) {
+                    const { matchedPeerId } = await response.json();
+                    if (matchedPeerId) {
+                        await startVideoChat(matchedPeerId);
+                    }
+                }
+            } catch (error) {
+                console.error('Error:', error);
+                alert('Something went wrong. Please try again.');
+                resetUI();
+            }
+        });
+
+        async function startVideoChat(matchedPeerId) {
+            try {
+                clearInterval(waitTimer);
+                document.getElementById('loading').classList.add('hidden');
+                document.getElementById('videoChat').classList.remove('hidden');
+
+                const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+                localStream = stream;
+                document.getElementById('localVideo').srcObject = stream;
+
+                currentCall = peer.call(matchedPeerId, stream);
+                
+                currentCall.on('stream', (remoteStream) => {
+                    document.getElementById('remoteVideo').srcObject = remoteStream;
+                });
+            } catch (err) {
+                console.error('Error in video chat:', err);
+                alert('Unable to access camera/microphone. Please check permissions.');
+                resetUI();
+            }
+        }
+
+        function resetUI() {
+            clearInterval(waitTimer);
+            document.getElementById('loading').classList.add('hidden');
+            document.getElementById('videoChat').classList.add('hidden');
+            document.getElementById('interestForm').classList.remove('hidden');
+            if (localStream) {
+                localStream.getTracks().forEach(track => track.stop());
+            }
+            if (currentCall) {
+                currentCall.close();
+            }
+        }
+
+        // Control buttons
+        document.getElementById('muteAudio').onclick = () => {
+            const tracks = localStream.getAudioTracks();
+            tracks.forEach(track => track.enabled = !track.enabled);
+            document.getElementById('muteAudio').innerHTML = tracks[0].enabled ? 
+                '<i class="bi bi-mic-fill text-xl"></i>' : 
+                '<i class="bi bi-mic-mute-fill text-xl text-red-500"></i>';
+        };
+
+        document.getElementById('muteVideo').onclick = () => {
+            const tracks = localStream.getVideoTracks();
+            tracks.forEach(track => track.enabled = !track.enabled);
+            document.getElementById('muteVideo').innerHTML = tracks[0].enabled ? 
+                '<i class="bi bi-camera-video-fill text-xl"></i>' : 
+                '<i class="bi bi-camera-video-off-fill text-xl text-red-500"></i>';
+        };
+
+        document.getElementById('endCall').onclick = () => {
+            resetUI();
+        };
+
+        // Handle page unload
+        window.onbeforeunload = () => {
+            if (peer) peer.destroy();
+            resetUI();
+        };
+    </script>
+<script>document.body.addEventListener('wheel', e => { if (!e.ctrlKey) return; e.preventDefault(); return }, { passive: false })</script>
+	</body>
+</html>
